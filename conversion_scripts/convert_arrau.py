@@ -4,13 +4,15 @@ import json
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 
-rst_path = "/exp/pxia/incremental_coref/data/LDC2013T22/data/RST_DTreeBank"
+rst_path = "/data/wgu/ARRAU/data/RST_DTreeBank"
 output_path = sys.argv[1]
 
 coref_drop = 0
 drop_counter = 0
 min_drop = 0
 total = 0
+relation_count = 0
+relation_drop = 0
 def get_files(split):
   path = f"{rst_path}/{split}/MMAX"
   files = []
@@ -74,6 +76,11 @@ def xml_coref(path, token_list, token_map):
   global coref_drop
   global min_drop
   global total
+  global relation_count
+  global relation_drop
+
+  markable_id_token_map = {}
+  relations = []
   tree = ET.parse(path)
   root = tree.getroot()
   coref_iter = root.iter()
@@ -99,8 +106,31 @@ def xml_coref(path, token_list, token_map):
         start = span
         end = span
       clusters[markable.attrib["coref_set"]].append([token_map[start], token_map[end]])
+      markable_id_token_map[markable_id]=[token_map[start], token_map[end]]
+      if "related_rel" in markable.attrib:
+        related_rel = markable.attrib["related_rel"]
+        if "related_phrase" in markable.attrib:
+          related_phrase = markable.attrib["related_phrase"]
+          related_phrase = related_phrase.split(";")
+          relations.append({"head_phrase": markable_id_token_map[markable_id],"related_phrase": related_phrase, "related_rel": related_rel})
+        else:
+            relation_drop += 1
+      else:
+          relation_drop += 1
   coref_clusters = list(clusters.values())
-  return coref_clusters
+  mapped_relations = []
+  for relation in relations:
+      related_phrases = relation["related_phrase"]
+      temp_related_phrases = []
+      for related_phrase in related_phrases:
+          if related_phrase in markable_id_token_map.keys():
+            temp_related_phrases.append(markable_id_token_map[related_phrase])
+      relation["related_phrase"] = temp_related_phrases
+      if len(temp_related_phrases) != 0:
+        mapped_relations.append(relation)
+      else:
+        relation_drop += 1
+  return coref_clusters,mapped_relations
 
 
 def get_markables(path, prefix):
@@ -111,19 +141,20 @@ def get_markables(path, prefix):
   words = xml_words(words_path)
   sentences = xml_sentences(sentence_path, words[0], words[1])
   # markable = xml_markables(markable_path, words[0], words[1])
-  coref = xml_coref(coref_path, words[0], words[1])
-  return (sentences, coref)
+  coref,relation = xml_coref(coref_path, words[0], words[1])
+  return (sentences, coref, relation)
 
 def process_split(split):
   files = get_files(split)
   path = f"{rst_path}/{split}/MMAX"
   all_files = []
   for prefix in files:
-    text, clusters = get_markables(path, prefix)
+    text, clusters,relations = get_markables(path, prefix)
     new_dictionary = {
       "doc_key": prefix,
       "sentences": text,
-      "clusters": clusters
+      "clusters": clusters,
+      "relations": relations
     }
     all_files.append(new_dictionary)
   output = open(f"{output_path}/{split}.jsonlines", 'w+')
